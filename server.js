@@ -1,7 +1,7 @@
 
+
 import express from "express";
 import cors from "cors";
-import OpenAI from "openai";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -13,10 +13,6 @@ app.use(cors({
 }));
 
 app.use(express.json({ limit: "10kb" }));
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
 
 app.get("/", (req, res) => {
   res.send("ElimuSmart AI Tutor server is running.");
@@ -38,17 +34,57 @@ app.post("/ask", async (req, res) => {
       });
     }
 
-    const response = await openai.responses.create({
-      model: "gpt-4.1-mini",
-      instructions:
-        "You are ElimuSmart AI Tutor, a patient educational assistant for Kenyan learners. Explain concepts clearly at the learner's level, use step-by-step working for mathematics, and encourage learning. Do not simply invent facts. For schoolwork, explain how to reach the answer.",
-      input: question.trim(),
-      max_output_tokens: 700
-    });
+    if (!process.env.GEMINI_API_KEY) {
+      return res.status(500).json({
+        error: "The AI Tutor is not configured yet."
+      });
+    }
 
-    res.json({
-      answer: response.output_text
-    });
+    const response = await fetch(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": process.env.GEMINI_API_KEY
+        },
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [{
+              text: "You are ElimuSmart AI Tutor, a patient tutor for Kenyan learners. Explain concepts clearly and show mathematics step by step."
+            }]
+          },
+          contents: [{
+            parts: [{ text: question.trim() }]
+          }],
+          generationConfig: {
+            maxOutputTokens: 700
+          }
+        })
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error("Gemini API error:", response.status, data.error?.message);
+      return res.status(502).json({
+        error: "The AI Tutor could not answer right now. Please try again."
+      });
+    }
+
+    const answer = data.candidates?.[0]?.content?.parts
+      ?.map(part => part.text || "")
+      .join("")
+      .trim();
+
+    if (!answer) {
+      return res.status(502).json({
+        error: "The AI Tutor returned an empty answer. Please try again."
+      });
+    }
+
+    res.json({ answer });
   } catch (error) {
     console.error("AI Tutor request failed:", error.message);
     res.status(500).json({
@@ -60,3 +96,4 @@ app.post("/ask", async (req, res) => {
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`ElimuSmart AI Tutor server listening on port ${PORT}`);
 });
+
